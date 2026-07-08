@@ -31,7 +31,7 @@ def extract_verdict_pure(text):
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
 MODEL_NAME = "qwen2.5:14b"
-CONCURRENCY_LIMIT = 8  # Aynı anda kaç istek atılacak? Ollama için 8 idealdir.
+CONCURRENCY_LIMIT = 64
 
 async def fetch_llm_result(session, sem, record_id, text, retries=3):
     prompt = f"Aşağıdaki hukuki metnin sadece hüküm (sonuç/karar) kısmını aynen yaz. Ekstra hiçbir yorum veya açıklama ekleme:\n\n{text[-2000:]}"
@@ -62,7 +62,14 @@ async def main_async():
     # 1. Kategorize Edilmiş Test Veri Setini Yükleme
     print("Test veri seti (15.000 Gold) yükleniyor...")
     ds = load_from_disk(r'C:\work environment\Python\bil 471\dataset_gold_test_categorized')
-    df_filtered = ds.to_pandas()
+    
+    # ARKADAŞINIZLA BÖLÜŞMEK İÇİN AYARLAR (Yarı yarıya bölüşmek için)
+    # Sizin PC için -> START_INDEX = 0, END_INDEX = 7500
+    # Arkadaşınızın PC için -> START_INDEX = 7500, END_INDEX = 15000
+    START_INDEX = 0
+    END_INDEX = 15000  # Hepsini tek PC'de yapmak için 15000 kalsın
+    
+    df_filtered = ds.to_pandas().iloc[START_INDEX:END_INDEX].copy()
     
     total_samples = len(df_filtered)
     print(f"Toplam {total_samples} adet test örneği Qwen2.5-14B ile işlenecek.")
