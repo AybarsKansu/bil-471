@@ -70,7 +70,6 @@ async def main_async():
     # Arkadaşınızın PC için -> START_INDEX = 7500, END_INDEX = 15000
     START_INDEX = 0
     END_INDEX = 15000  # Hepsini tek PC'de yapmak için 15000 kalsın
-
     df_filtered = ds.to_pandas().iloc[START_INDEX:END_INDEX].copy()
 
     total_samples = len(df_filtered)
@@ -110,9 +109,15 @@ async def main_async():
         for f in tqdm_asyncio.as_completed(tasks, total=len(tasks), desc="Ollama Paralel İşleniyor"):
             record_id, llm_output = await f
             completed_results[record_id] = llm_output
+<<<<<<< HEAD
 
             # Her 500 işlemde bir diske yaz, hata olursa gitmesin
             if len(completed_results) % 500 == 0:
+=======
+            
+            # Her 100 işlemde bir diske yaz, hata olursa gitmesin
+            if len(completed_results) % 100 == 0:
+>>>>>>> 9060dec (aa)
                 with open(checkpoint_file, 'w', encoding='utf-8') as cf:
                     json.dump(completed_results, cf, ensure_ascii=False, indent=2)
 
