@@ -11,6 +11,8 @@ from typing import Dict, List, Tuple
 from datasets import load_from_disk
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 TRANSLIT_TABLE = str.maketrans(
     {
         "c": "c",
@@ -259,7 +261,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--dataset-path",
         type=Path,
-        default=Path("saved_dataset"),
+        default=REPO_ROOT / "saved_dataset",
         help="Path to Hugging Face dataset saved with save_to_disk().",
     )
     parser.add_argument(
@@ -277,7 +279,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("analysis_outputs"),
+        default=REPO_ROOT / "analysis_outputs",
         help="Output directory for report files.",
     )
     return parser.parse_args()

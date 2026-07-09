@@ -2,6 +2,11 @@ import re
 import pandas as pd
 from datasets import load_from_disk, Dataset
 import os
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parent
+SOURCE_DATASET_PATH = REPO_ROOT / "saved_dataset"
 
 STRICT_PATTERNS = [
     re.compile(r'\b(?:H\s*Ü\s*K\s*Ü\s*M|S\s*O\s*N\s*U\s*Ç)\s*(?:[:：]|[\n\r]+)', re.IGNORECASE),
@@ -26,7 +31,7 @@ def extract_verdict_pure_limited(text):
 
 def main():
     print("Orijinal veri seti yükleniyor...")
-    ds = load_from_disk(r'C:\work environment\Python\nlp_exercises\saved_dataset')
+    ds = load_from_disk(str(SOURCE_DATASET_PATH))
     df = ds['train'].to_pandas()
     
     print("Regex kuralı (1500 karakter sınırı) uygulanıyor...")
@@ -51,11 +56,11 @@ def main():
     train_dataset = Dataset.from_pandas(df_train.reset_index(drop=True))
     
     # Diske kaydet
-    test_path = "dataset_gold_test"
-    train_path = "dataset_train"
+    test_path = REPO_ROOT / "dataset_gold_test"
+    train_path = REPO_ROOT / "dataset_train"
     
-    test_dataset.save_to_disk(test_path)
-    train_dataset.save_to_disk(train_path)
+    test_dataset.save_to_disk(str(test_path))
+    train_dataset.save_to_disk(str(train_path))
     
     print(f"\nVeri setleri başarıyla kaydedildi:")
     print(f"- Test: {test_path}")

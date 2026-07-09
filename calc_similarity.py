@@ -1,6 +1,10 @@
 import os
 import pandas as pd
 from difflib import SequenceMatcher
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parent
 
 def calculate_similarity(text1, text2):
     if pd.isna(text1): text1 = ""
@@ -10,8 +14,8 @@ def calculate_similarity(text1, text2):
     return SequenceMatcher(None, text1, text2).ratio()
 
 def main():
-    output_dir = r"c:\work environment\Python\bil 471\consistency_outputs"
-    target_file = os.path.join(output_dir, "llm_run_1.xlsx")
+    output_dir = REPO_ROOT / "consistency_outputs"
+    target_file = output_dir / "llm_run_1.xlsx"
     
     if not os.path.exists(target_file):
         print(f"Hata: {target_file} bulunamadı.")
@@ -35,7 +39,7 @@ def main():
     print(f"\nİşlem tamamlandı! {len(df)} adet örnek kıyaslandı.")
     print(f"--> Regex ile LLM Arası Ortalama Benzerlik Skoru: {mean_score:.4f}")
     
-    out_path = os.path.join(output_dir, "regex_vs_llm_report.xlsx")
+    out_path = output_dir / "regex_vs_llm_report.xlsx"
     df.to_excel(out_path, index=False)
     print(f"Detaylı sonuçlar '{out_path}' dosyasına kaydedildi.")
 

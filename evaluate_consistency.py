@@ -5,8 +5,13 @@ from datasets import load_from_disk
 import requests
 from difflib import SequenceMatcher
 from itertools import combinations
+from pathlib import Path
 import warnings
 warnings.filterwarnings('ignore')
+
+
+REPO_ROOT = Path(__file__).resolve().parent
+MODEL_NAME = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
 
 # Regex Kalıpları
 STRICT_PATTERNS = [
@@ -31,16 +36,28 @@ def extract_verdict_pure(text):
     return None
 
 def extract_verdict_with_llm(text):
-    prompt = f"Aşağıdaki hukuki metnin sadece hüküm (sonuç/karar) kısmını aynen yaz. Ekstra hiçbir yorum veya açıklama ekleme:\n\n{text[-2000:]}"
+    prompt = f"""Aşağıdaki hukuki metnin sadece HÜKÜM / SONUÇ / KARAR kısmını metinden aynen kopyala.
+
+Kurallar:
+- Sadece ilgili hüküm/sonuç/karar metnini yaz.
+- Açıklama, yorum, özet veya gerekçe ekleme.
+- Metinde olmayan hiçbir ifadeyi üretme.
+- <think> etiketi veya düşünme çıktısı yazma.
+- Hüküm kısmı bulunamazsa sadece [BULUNAMADI] yaz.
+
+Metin:
+{text[-2000:]}"""
     try:
         response = requests.post("http://localhost:11434/api/generate", json={
-            "model": "qwen2.5:7b",
+            "model": MODEL_NAME,
             "prompt": prompt,
             "stream": False,
             "options": {"temperature": 0.0} # Extraction (çıkarım) işlemi yaptığımız için halüsinasyonu önlemek adına 0.0 yapıldı.
         })
         if response.status_code == 200:
-            return response.json().get('response', '').strip()
+            llm_output = response.json().get('response', '').strip()
+            llm_output = re.sub(r"<think>.*?</think>", "", llm_output, flags=re.DOTALL | re.IGNORECASE).strip()
+            return llm_output
         else:
             return f"[HATA: {response.status_code}]"
     except Exception as e:
@@ -54,7 +71,7 @@ def calculate_similarity(text1, text2):
 
 def main():
     print("Veri seti yükleniyor...")
-    ds = load_from_disk(r'C:\work environment\Python\nlp_exercises\saved_dataset')
+    ds = load_from_disk(str(REPO_ROOT / "saved_dataset"))
     df = ds['train'].to_pandas()
 
     print("Regex işlemi uygulanıyor...")
@@ -66,7 +83,7 @@ def main():
     df_sample = successful_extractions.sample(n=sample_size, random_state=42).copy()
     
     # Çıktı klasörünü oluştur
-    output_dir = "consistency_outputs"
+    output_dir = REPO_ROOT / "consistency_outputs"
     os.makedirs(output_dir, exist_ok=True)
     
     # Tüm LLM sonuçlarını tutacağımız bir sözlük: {id: [run1, run2, run3, run4, run5]}

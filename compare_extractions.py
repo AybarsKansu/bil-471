@@ -2,6 +2,10 @@ import re
 import pandas as pd
 from datasets import load_from_disk
 import time
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parent
 
 # SADECE İKİ NOKTA VEYA ALT SATIR İLE BİTEN, KESİN BAŞLIKLAR
 STRICT_PATTERNS = [
@@ -43,7 +47,7 @@ def extract_new(text):
 
 if __name__ == "__main__":
     print("Veri seti yükleniyor...")
-    ds = load_from_disk(r'C:\work environment\Python\nlp_exercises\saved_dataset')
+    ds = load_from_disk(str(REPO_ROOT / "saved_dataset"))
     df = ds['train'].to_pandas()
     
     print("Orijinal (sınırsız) regex kuralı uygulanıyor...")
