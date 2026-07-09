@@ -1,4 +1,5 @@
 import os
+import json
 import requests
 import time
 import pandas as pd
@@ -65,40 +66,65 @@ def main():
     
     print(f"Toplam {len(df)} kayıt üzerinde otomatik kategorizasyon başlatılıyor...")
     
-    # 1. Hızlı Vektörizasyon (TF-IDF)
-    # n_features=10000, max_df=0.9, min_df=5 gibi ayarlar çok hızlı ve doğru kümeleme sağlar
-    print("Metinler vektörlere dönüştürülüyor (TF-IDF)...")
-    turkish_stop_words = ["ve", "veya", "ile", "için", "gibi", "kadar", "olan", "olarak", "dava", "davası", "davaya", "karar", "hüküm", "tarih", "madde", "göre", "tarafından", "hakkında", "sayılı", "mahkemesi"]
-    vectorizer = TfidfVectorizer(max_features=10000, stop_words=turkish_stop_words, ngram_range=(1, 2), max_df=0.8, min_df=10)
-    # Hüküm metni üzerinden konuları bulmak daha sağlıklıdır, çünkü gereksiz gürültü yoktur.
-    X = vectorizer.fit_transform(df['hukum_text_regex'])
+    # JSON Dosyası Kontrolü
+    MAPPING_FILE = "categorization_results.json"
     
-    # 2. Doğrudan K-Means (10 Kategori)
-    num_clusters = 10
-    
-    print(f"\nSeçilen K={num_clusters} değeri ile nihai kümeleme yapılıyor...")
-    kmeans = MiniBatchKMeans(n_clusters=num_clusters, random_state=42, batch_size=2048)
-    df['cluster_id'] = kmeans.fit_predict(X)
-    
-    # 3. Kümeleri LLM ile İsimlendirme
-    print("\nOluşturulan kümeler LLM kullanılarak isimlendiriliyor...")
-    cluster_names = {}
-    
-    for cluster_id in range(num_clusters):
-        # Bu kümeye ait rastgele örnek seç
-        cluster_df = df[df['cluster_id'] == cluster_id]['hukum_text_regex']
-        sample_size = min(10, len(cluster_df))
-        cluster_samples = cluster_df.sample(n=sample_size, random_state=42).tolist()
+    if os.path.exists(MAPPING_FILE):
+        print(f"\n'{MAPPING_FILE}' bulundu. Kategorizasyon sonuçları dosyadan okunuyor...")
+        with open(MAPPING_FILE, "r", encoding="utf-8") as f:
+            mapping_data = json.load(f)
+            
+        cluster_names = {int(k): v for k, v in mapping_data["cluster_names"].items()}
+        data_mapping = mapping_data["data_mapping"]
         
-        # LLM'e sor
-        print(f"Küme {cluster_id} için LLM'den isim bekleniyor...")
-        category_name = get_category_name_from_llm(cluster_samples, cluster_id)
-        cluster_names[cluster_id] = category_name
-        safe_name = category_name.encode('cp1254', 'replace').decode('cp1254')
-        print(f"  -> Küme {cluster_id} İsimlendirildi: {safe_name}")
+        # Dosyadan okunan mapping'i veri setine uygulama
+        df['cluster_id'] = df['id'].astype(str).map(data_mapping)
+        df['category'] = df['cluster_id'].map(cluster_names)
         
-    # 4. İsimleri Dataframe'e uygula
-    df['category'] = df['cluster_id'].map(cluster_names)
+    else:
+        # 1. Hızlı Vektörizasyon (TF-IDF)
+        # n_features=10000, max_df=0.9, min_df=5 gibi ayarlar çok hızlı ve doğru kümeleme sağlar
+        print("Metinler vektörlere dönüştürülüyor (TF-IDF)...")
+        turkish_stop_words = ["ve", "veya", "ile", "için", "gibi", "kadar", "olan", "olarak", "dava", "davası", "davaya", "karar", "hüküm", "tarih", "madde", "göre", "tarafından", "hakkında", "sayılı", "mahkemesi"]
+        vectorizer = TfidfVectorizer(max_features=10000, stop_words=turkish_stop_words, ngram_range=(1, 2), max_df=0.8, min_df=10)
+        # Hüküm metni üzerinden konuları bulmak daha sağlıklıdır, çünkü gereksiz gürültü yoktur.
+        X = vectorizer.fit_transform(df['hukum_text_regex'])
+        
+        # 2. Doğrudan K-Means (10 Kategori)
+        num_clusters = 10
+        
+        print(f"\nSeçilen K={num_clusters} değeri ile nihai kümeleme yapılıyor...")
+        kmeans = MiniBatchKMeans(n_clusters=num_clusters, random_state=42, batch_size=2048)
+        df['cluster_id'] = kmeans.fit_predict(X)
+        
+        # 3. Kümeleri LLM ile İsimlendirme
+        print("\nOluşturulan kümeler LLM kullanılarak isimlendiriliyor...")
+        cluster_names = {}
+        
+        for cluster_id in range(num_clusters):
+            # Bu kümeye ait rastgele örnek seç
+            cluster_df = df[df['cluster_id'] == cluster_id]['hukum_text_regex']
+            sample_size = min(10, len(cluster_df))
+            cluster_samples = cluster_df.sample(n=sample_size, random_state=42).tolist()
+            
+            # LLM'e sor
+            print(f"Küme {cluster_id} için LLM'den isim bekleniyor...")
+            category_name = get_category_name_from_llm(cluster_samples, cluster_id)
+            cluster_names[cluster_id] = category_name
+            safe_name = category_name.encode('cp1254', 'replace').decode('cp1254')
+            print(f"  -> Küme {cluster_id} İsimlendirildi: {safe_name}")
+            
+        # 4. İsimleri Dataframe'e uygula
+        df['category'] = df['cluster_id'].map(cluster_names)
+        
+        # Sonuçları JSON dosyasına kaydet
+        print(f"\nKategorizasyon tamamlandı. Sonuçlar '{MAPPING_FILE}' dosyasına kaydediliyor...")
+        mapping_data = {
+            "cluster_names": cluster_names,
+            "data_mapping": dict(zip(df['id'].astype(str), df['cluster_id'].astype(int)))
+        }
+        with open(MAPPING_FILE, "w", encoding="utf-8") as f:
+            json.dump(mapping_data, f, ensure_ascii=False, indent=4)
     
     print("\nKategorizasyon tamamlandı! Örnek dağılım:")
     print(df['category'].value_counts())
