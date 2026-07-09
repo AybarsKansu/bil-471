@@ -1,7 +1,6 @@
 import os
 import re
 import json
-import argparse
 import asyncio
 import aiohttp
 import pandas as pd
@@ -27,36 +26,24 @@ def extract_verdict_pure(text):
         if valid_matches:
             last_match = valid_matches[-1]
             verdict_text = normalized[last_match.end():].strip()
-            if len(verdict_text) > 25: 
+            if len(verdict_text) > 25:
                 return verdict_text
     return None
 
 OLLAMA_URL = "http://localhost:11434/api/generate"
-MODEL_NAME = os.environ.get("OLLAMA_MODEL", "qwen3.5:9b")
-CONCURRENCY_LIMIT = int(os.environ.get("OLLAMA_CONCURRENCY", "64"))
-DEFAULT_START_INDEX = int(os.environ.get("START_INDEX", "0"))
-DEFAULT_END_INDEX = int(os.environ.get("END_INDEX", "15000"))
+MODEL_NAME = "qwen2.5:14b"
+CONCURRENCY_LIMIT = 64
 REPO_ROOT = Path(__file__).resolve().parent
 
 async def fetch_llm_result(session, sem, record_id, text, retries=3):
-    prompt = f"""Aşağıdaki hukuki metnin sadece HÜKÜM / SONUÇ / KARAR kısmını metinden aynen kopyala.
-
-Kurallar:
-- Sadece ilgili hüküm/sonuç/karar metnini yaz.
-- Açıklama, yorum, özet, maddeleme başlığı veya gerekçe ekleme.
-- Metinde olmayan hiçbir ifadeyi üretme.
-- <think> etiketi veya düşünme çıktısı yazma.
-- Hüküm kısmı bulunamazsa sadece [BULUNAMADI] yaz.
-
-Metin:
-{text[-2000:]}"""
+    prompt = f"Aşağıdaki hukuki metnin sadece hüküm (sonuç/karar) kısmını aynen yaz. Ekstra hiçbir yorum veya açıklama ekleme:\n\n{text[-2000:]}"
     payload = {
         "model": MODEL_NAME,
         "prompt": prompt,
         "stream": False,
         "options": {"temperature": 0.0}
     }
-    
+
     async with sem:
         for attempt in range(retries):
             try:
@@ -64,9 +51,7 @@ Metin:
                 async with session.post(OLLAMA_URL, json=payload, timeout=120) as response:
                     if response.status == 200:
                         data = await response.json()
-                        llm_output = data.get('response', '').strip()
-                        llm_output = re.sub(r"<think>.*?</think>", "", llm_output, flags=re.DOTALL | re.IGNORECASE).strip()
-                        return record_id, llm_output
+                        return record_id, data.get('response', '').strip()
                     else:
                         await asyncio.sleep(2)
             except Exception as e:
@@ -75,34 +60,39 @@ Metin:
                 await asyncio.sleep(2)
         return record_id, "[HATA: Max retries ulaşıldı]"
 
-async def main_async(start_index, end_index):
+async def main_async():
     # 1. Kategorize Edilmiş Test Veri Setini Yükleme
     print("Test veri seti (15.000 Gold) yükleniyor...")
     ds = load_from_disk(str(REPO_ROOT / "dataset_gold_test_categorized"))
-    
-    df_filtered = ds.to_pandas().iloc[start_index:end_index].copy()
-    
+
+    # ARKADAŞINIZLA BÖLÜŞMEK İÇİN AYARLAR (Yarı yarıya bölüşmek için)
+    # Sizin PC için -> START_INDEX = 0, END_INDEX = 7500
+    # Arkadaşınızın PC için -> START_INDEX = 7500, END_INDEX = 15000
+    START_INDEX = 0
+    END_INDEX = 15000  # Hepsini tek PC'de yapmak için 15000 kalsın
+
+    df_filtered = ds.to_pandas().iloc[START_INDEX:END_INDEX].copy()
+
     total_samples = len(df_filtered)
-    print(f"Index araligi: {start_index}-{end_index}")
-    print(f"Toplam {total_samples} adet test örneği {MODEL_NAME} ile işlenecek.")
-    
+    print(f"Toplam {total_samples} adet test örneği Qwen2.5-14B ile işlenecek.")
+
     output_dir = REPO_ROOT / "async_extraction_outputs"
     os.makedirs(output_dir, exist_ok=True)
-    checkpoint_file = output_dir / f"checkpoint_results_{start_index}_{end_index}.json"
-    
+    checkpoint_file = output_dir / "checkpoint_results.json"
+
     # 2. Kaldığı yerden devam etme (Checkpointing)
     completed_results = {}
     if os.path.exists(checkpoint_file):
         with open(checkpoint_file, 'r', encoding='utf-8') as f:
             completed_results = json.load(f)
         print(f"Önceki çalıştırmadan {len(completed_results)} adet sonuç yüklendi.")
-        
+
     tasks_to_run = []
     for idx, row in df_filtered.iterrows():
         record_id = str(row['id'])
         if record_id not in completed_results:
             tasks_to_run.append((record_id, row['text']))
-            
+
     print(f"Sıradaki işlenecek kayıt sayısı: {len(tasks_to_run)}")
     if len(tasks_to_run) == 0:
         print("İşlenecek kayıt kalmadı. Tüm işlemler tamam!")
@@ -112,48 +102,36 @@ async def main_async(start_index, end_index):
     # Terminalde OLLAMA_NUM_PARALLEL ayarlı olmalı (Set OLLAMA_NUM_PARALLEL=8 gibi)
     sem = asyncio.Semaphore(CONCURRENCY_LIMIT)
     connector = aiohttp.TCPConnector(limit=CONCURRENCY_LIMIT)
-    
+
     async with aiohttp.ClientSession(connector=connector) as session:
         tasks = [fetch_llm_result(session, sem, record_id, text) for record_id, text in tasks_to_run]
-        
+
         # tqdm_asyncio ekranda muazzam bir ilerleme çubuğu gösterecek
         for f in tqdm_asyncio.as_completed(tasks, total=len(tasks), desc="Ollama Paralel İşleniyor"):
             record_id, llm_output = await f
             completed_results[record_id] = llm_output
-            
+
             # Her 500 işlemde bir diske yaz, hata olursa gitmesin
             if len(completed_results) % 500 == 0:
                 with open(checkpoint_file, 'w', encoding='utf-8') as cf:
                     json.dump(completed_results, cf, ensure_ascii=False, indent=2)
-                    
+
     # 4. İşlem Sonu ve Final Excel Çıktısı
     with open(checkpoint_file, 'w', encoding='utf-8') as cf:
         json.dump(completed_results, cf, ensure_ascii=False, indent=2)
-        
+
     print("\n[TAMAMLANDI] Tüm API istekleri bitti.")
-    
+
     df_final = df_filtered.copy()
     df_final['hukum_text_llm'] = df_final['id'].astype(str).map(completed_results)
-    
-    final_excel = output_dir / f"final_parallel_extraction_{start_index}_{end_index}.xlsx"
+
+    final_excel = output_dir / "final_parallel_extraction.xlsx"
     df_final.to_excel(final_excel, index=False)
     print(f"Sonuçlar başarıyla '{final_excel}' konumuna kaydedildi!")
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Run async Ollama extraction for a test index range.")
-    parser.add_argument("--start-index", type=int, default=DEFAULT_START_INDEX)
-    parser.add_argument("--end-index", type=int, default=DEFAULT_END_INDEX)
-    parser.add_argument("--model", default=MODEL_NAME)
-    parser.add_argument("--concurrency", type=int, default=CONCURRENCY_LIMIT)
-    return parser.parse_args()
-
 if __name__ == "__main__":
-    args = parse_args()
-    MODEL_NAME = args.model
-    CONCURRENCY_LIMIT = args.concurrency
-
     # Windows ortamında aiohttp / asyncio hatalarını gidermek için:
     if os.name == 'nt':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    
-    asyncio.run(main_async(args.start_index, args.end_index))
+
+    asyncio.run(main_async())
